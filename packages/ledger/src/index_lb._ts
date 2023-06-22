@@ -1,0 +1,97 @@
+import { Connector } from "@web3-react/types";
+// TODO would be better to use the original one, but we needed to make a small change to support SSR. Look out for "CHANGE TO SUPPORT SSR"
+import { loadConnectKit, SupportedProviders } from "./ledger-connect-kit";
+
+function parseChainId(chainId) {
+  // Convert the chain ID from a string to a number if it's a hexadecimal string
+  return typeof chainId === "string" ? Number.parseInt(chainId, 16) : chainId;
+}
+
+export class LedgerWallet extends Connector {
+  constructor({ actions, options, onError }) {
+    super(actions, onError);
+
+    // Set the chain ID, chainHex, and RPC endpoint from the options object
+    this.chainId = options.chainId;
+    this.rpc = options.rpc;
+
+    // Load the ConnectKit library and store the promise in a member variable
+    this.connectKitPromise = loadConnectKit();
+
+    // Initialize the provider to undefined
+    this.provider = undefined;
+  }
+
+  async connectEagerly() {
+    // cancelActivation means starting a new Activation -> Start the activation
+    const cancelActivation = this.actions.startActivation();
+
+    try {
+      // Get the chain ID and accounts from the provider and update the state
+      const [chainId, accounts] = await Promise.all([
+        this.provider.request({ method: "eth_chainId" }),
+        this.provider.request({ method: "eth_accounts" }),
+      ]);
+      this.actions.update({ chainId: parseChainId(chainId), accounts });
+    } catch (error) {
+      // Reset the state and re-throw the error
+      this.actions.resetState();
+      throw error;
+    } finally {
+      // Stop the activation
+      cancelActivation();
+    }
+  }
+
+  /**
+   * method starts the activation, checks if the provider is supported, and if so,
+   * gets the provider. It then gets the chain ID and accounts from the provider and
+   * updates the state. If there is an error, the state is reset and the error is re-thrown.
+   */
+  async activate() {
+    // If the window is undefined or there's no document, return early since we can't do anything on a server side rendering
+    if (typeof window === "undefined" || !window.document) return;
+
+    // cancelActivation means starting a new Activation -> Start the activation
+    const cancelActivation = this.actions.startActivation();
+
+    try {
+      if (!this.provider) {
+        // Load the ConnectKit library if it hasn't been loaded yet
+        const connectKit = await this.connectKitPromise;
+
+        // Check if the provider is supported, and if so, get the provider
+        const checkSupportResult = connectKit.checkSupport({
+          chainId: this.chainId,
+          providerType: SupportedProviders.Ethereum,
+          rpc: this.rpc,
+        });
+        this.provider = await connectKit.getProvider();
+      }
+
+      // Get the chain ID and accounts from the provider and update the state
+      const [chainId, accounts] = await Promise.all([
+        this.provider.request({ method: "eth_chainId" }),
+        this.provider
+          .request({ method: "eth_requestAccounts" })
+          .catch(() => this.provider.request({ method: "eth_accounts" })),
+      ]);
+      this.actions.update({ chainId: parseChainId(chainId), accounts });
+    } catch (error) {
+      // Reset the state and re-throw the error
+      this.actions.resetState();
+      throw error;
+    } finally {
+      // Stop the activation
+      cancelActivation();
+    }
+  }
+
+  // Reset provider and state
+  async deactivate() {
+    if (this.provider) {
+      this.provider = undefined;
+    }
+    this.actions.resetState();
+  }
+}
