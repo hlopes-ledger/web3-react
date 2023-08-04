@@ -1,9 +1,4 @@
-import CoinbaseWalletCard from '../components/connectorCards/CoinbaseWalletCard'
-import GnosisSafeCard from '../components/connectorCards/GnosisSafeCard'
 import LedgerCard from '../components/connectorCards/LedgerCard'
-import MetaMaskCard from '../components/connectorCards/MetaMaskCard'
-import NetworkCard from '../components/connectorCards/NetworkCard'
-import WalletConnectCard from '../components/connectorCards/WalletConnectCard'
 import WalletConnectV2Card from '../components/connectorCards/WalletConnectV2Card'
 import ProviderExample from '../components/ProviderExample'
 
@@ -13,12 +8,12 @@ export default function Home() {
       <ProviderExample />
       <div style={{ display: 'flex', flexFlow: 'wrap', fontFamily: 'sans-serif' }}>
         <LedgerCard />
-        <MetaMaskCard />
+        {/* <MetaMaskCard /> */}
         <WalletConnectV2Card />
-        <WalletConnectCard />
-        <CoinbaseWalletCard />
-        <NetworkCard />
-        <GnosisSafeCard />
+        {/* <WalletConnectCard /> */}
+        {/* <CoinbaseWalletCard /> */}
+        {/* <NetworkCard /> */}
+        {/* <GnosisSafeCard /> */}
       </div>
     </>
   )

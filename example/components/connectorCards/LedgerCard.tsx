@@ -1,4 +1,3 @@
-import { URI_AVAILABLE } from '@web3-react/ledger'
 import { useEffect, useState } from 'react'
 
 import { MAINNET_CHAINS } from '../../chains'
@@ -20,13 +19,6 @@ export default function LedgerCard() {
   const ENSNames = useENSNames(provider)
 
   const [error, setError] = useState(undefined)
-
-  // log URI when available
-  useEffect(() => {
-    ledger.events.on(URI_AVAILABLE, (uri: string) => {
-      console.log(`uri: ${uri}`)
-    })
-  }, [])
 
   // attempt to connect eagerly on mount
   useEffect(() => {

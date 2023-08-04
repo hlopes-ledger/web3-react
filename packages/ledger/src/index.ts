@@ -1,4 +1,3 @@
-import { EthereumProvider, loadConnectKit, SupportedProviders } from '@ledgerhq/connect-kit-loader'
 import { Actions, Connector, Provider, ProviderRpcError } from '@web3-react/types'
 
 export const URI_AVAILABLE = 'URI_AVAILABLE'
@@ -9,6 +8,22 @@ function parseChainId(chainId: string | number) {
 }
 
 type LedgerProvider = Provider & EthereumProvider
+
+export type EthereumRequestPayload = {
+  method: string
+  params?: unknown[] | object
+}
+
+export interface EthereumProvider {
+  providers?: EthereumProvider[]
+  connector?: unknown
+  session?: unknown
+  chainId: string | number
+  request<T = unknown>(args: EthereumRequestPayload): Promise<T>
+  disconnect?: { (): Promise<void> }
+  on(event: any, listener: any): void
+  removeListener(event: string, listener: any): void
+}
 
 /**
  * Options to configure the Ledger Connect Kit.
@@ -56,17 +71,20 @@ export interface LedgerConstructorArgs {
  */
 export class Ledger extends Connector {
   public provider?: LedgerProvider
+  // TODO use a better type
+  private readonly options?: any
 
   private connectKitPromise
+  private connectKit?: any
+  private readonly defaultChainId?: number
 
-  constructor({ actions, onError }: LedgerConstructorArgs) {
+  constructor({ actions, options, defaultChainId, onError }: LedgerConstructorArgs) {
     super(actions, onError)
+    this.options = options
+    this.defaultChainId = defaultChainId
 
-    // Load the ConnectKit library and store the promise in a member variable
-    this.connectKitPromise = loadConnectKit()
-
-    // Initialize the provider to undefined
-    this.provider = undefined
+    // load Connect Kit and store the promise
+    this.connectKitPromise = this.loadConnectKit()
   }
 
   private disconnectListener = (error: ProviderRpcError) => {
@@ -85,59 +103,105 @@ export class Ledger extends Connector {
     this.actions.update({ accounts })
   }
 
-  private isomorphicInitialize(): Promise<LedgerProvider> {
+  private async isomorphicInitialize(desiredChainId: number | undefined = this.defaultChainId): Promise<void> {
     console.log('isomorphicInitialize')
-    return loadConnectKit().then(async (connectKit) => {
-      connectKit.checkSupport({
-        providerType: SupportedProviders.Ethereum,
-        walletConnectVersion: 2,
-        projectId: '85a25426af6e359da0d3508466a95a1d',
-        // chains: this.options.chains,
-        // rpcMap: this.options.rpcMap,
-        chains: [1],
-        rpcMap: {
-          1: 'https://cloudflare-eth.com/', // Mainnet
-          5: 'https://goerli.optimism.io/', // Goerli
-          137: 'https://polygon-rpc.com/', // Polygon
-        },
-      })
-      connectKit.enableDebugLogs()
+    console.log('desiredChainId is', desiredChainId)
+    console.log('provider is', this.provider)
 
-      const provider = (this.provider = (await connectKit.getProvider()) as LedgerProvider)
-      provider.on('disconnect', this.disconnectListener)
-      provider.on('chainChanged', this.chainChangedListener)
-      provider.on('accountsChanged', this.accountsChangedListener)
+    // reuse the provider if it already exists
+    if (this.provider) return
 
-      return provider
+    this.connectKit = await this.connectKitPromise
+    console.log('isomorphicInitialize complete, connectKit is ready')
+
+    // TODO simplify this, pass options directly?
+    const projectId = this.options.projectId
+    const chains = this.options.chains
+    const optionalChains = this.options.optionalChains
+    const methods = this.options.requiredMethods
+    const optionalMethods = this.options.optionalMethods
+    const events = this.options.requiredEvents
+    const optionalEvents = this.options.optionalEvents
+    const rpcMap = this.options.rpcMap || {
+      1: 'https://cloudflare-eth.com/', // Mainnet
+      5: 'https://goerli.optimism.io/', // Goerli
+      137: 'https://polygon-rpc.com/', // Polygon
+    }
+
+    this.connectKit.checkSupport({
+      providerType: 'Ethereum',
+      walletConnectVersion: 2,
+      projectId,
+      chains,
+      optionalChains,
+      methods,
+      optionalMethods,
+      events,
+      optionalEvents,
+      rpcMap,
+    })
+    this.connectKit.enableDebugLogs()
+
+    const provider = (this.provider = (await this.connectKit.getProvider()) as LedgerProvider)
+    provider.on('disconnect', this.disconnectListener)
+    provider.on('chainChanged', this.chainChangedListener)
+    provider.on('accountsChanged', this.accountsChangedListener)
+  }
+
+  private async loadConnectKit() {
+    const src = 'https://statuesque-naiad-0cb980.netlify.app/umd/index.js'
+    const globalName = 'ledgerConnectKit'
+
+    return new Promise((resolve, reject) => {
+      const scriptId = `ledger-ck-script-${globalName}`
+
+      // we don't support server side rendering, reject with no stack trace for now
+      if (typeof document === 'undefined') {
+        reject('Connect Kit does not support server side')
+        return
+      }
+
+      if (document.getElementById(scriptId)) {
+        resolve((window as { [key: string]: any })[globalName])
+      } else {
+        const script = document.createElement('script')
+        script.src = src
+        script.id = scriptId
+        script.addEventListener('load', () => {
+          resolve((window as { [key: string]: any })[globalName])
+        })
+        script.addEventListener('error', (e) => {
+          reject(e.error)
+        })
+        document.head.appendChild(script)
+      }
     })
   }
 
   async connectEagerly() {
     console.log('connectEagerly')
-    // cancelActivation means starting a new Activation -> Start the activation
     const cancelActivation = this.actions.startActivation()
 
     try {
-      const provider = await this.isomorphicInitialize()
+      await this.isomorphicInitialize()
 
       // WalletConnect automatically persists and restores active sessions
-      if (!provider || !provider.session) {
-        throw new Error('No active session found. Connect your wallet first.')
+      if (!this.provider || !this.provider?.session) {
+        return cancelActivation()
       }
 
       // Get the chain ID and accounts from the provider and update the state
-      // const [chainId, accounts] = await Promise.all([
-      //   provider.request({ method: 'eth_chainId' }) as Promise<string>,
-      //   provider.request({ method: 'eth_accounts' }) as Promise<string[]>,
-      // ])
-      // this.actions.update({ chainId: parseChainId(chainId), accounts })
+      const [chainId, accounts] = await Promise.all([
+        this.provider.request({ method: 'eth_chainId' }) as Promise<string>,
+        this.provider.request({ method: 'eth_accounts' }) as Promise<string[]>,
+      ])
+      console.log('chainId and accounts are', chainId, accounts)
+      this.actions.update({ chainId: parseChainId(chainId), accounts })
     } catch (error) {
-      // Reset the state and re-throw the error
+      console.debug('Could not connect eagerly', error)
+      await this.deactivate()
       this.actions.resetState()
-      throw error
-    } finally {
-      // Stop the activation
-      cancelActivation()
+      // throw error
     }
   }
 
@@ -152,12 +216,14 @@ export class Ledger extends Connector {
     console.log('activate')
     if (typeof window === 'undefined' || !window.document) return
 
-    const provider = await this.isomorphicInitialize()
+    await this.isomorphicInitialize()
+    if (!this.provider) throw new Error('No provider')
+
     const cancelActivation = this.actions.startActivation()
 
     try {
-      const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[]
-      const chainId = (await provider.request({ method: 'eth_chainId' })) as string
+      const accounts = (await this.provider.request({ method: 'eth_requestAccounts' })) as string[]
+      const chainId = (await this.provider.request({ method: 'eth_chainId' })) as string
       this.actions.update({ chainId: parseChainId(chainId), accounts })
     } catch (error) {
       await this.deactivate()
@@ -166,12 +232,14 @@ export class Ledger extends Connector {
     }
   }
 
-  // Reset provider and state
   async deactivate() {
     console.log('deactivate')
     if (this.provider) {
+      this.provider?.disconnect?.()
       this.provider = undefined
     }
     this.actions.resetState()
   }
+
+  // TODO watchAsset
 }

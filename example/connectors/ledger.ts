@@ -3,7 +3,7 @@ import { Ledger } from '@web3-react/ledger'
 
 import { MAINNET_CHAINS } from '../chains'
 
-const [mainnet, polygon, ...optionalChains] = Object.keys(MAINNET_CHAINS).map(Number)
+const [mainnet, ...optionalChains] = Object.keys(MAINNET_CHAINS).map(Number)
 
 export const [ledger, hooks] = initializeConnector<Ledger>(
   (actions) =>
@@ -11,9 +11,8 @@ export const [ledger, hooks] = initializeConnector<Ledger>(
       actions,
       options: {
         projectId: process.env.walletConnectProjectId,
-        chains: [mainnet, polygon],
+        chains: [mainnet],
         optionalChains,
-        showQrModal: false,
       },
     })
 )
